@@ -8,6 +8,33 @@ const ctx = canvas.getContext("2d");
 let hits = 0;
 let powerUpsCollected = 0;
 
+let frameCount = 0;
+
+let gameState = "playing"; // playing | cardSelect
+let currentCards = [];
+
+const baseStats = {
+    fireRate: 1,        // multiplicador (1 = normal)
+    fireSpeed: 1,
+    bulletSpeed: 3,      // multiplicador
+    penetration: 0,     // quantos segmentos atravessa
+    multishot: 1,       // quantidade de tiros
+    bulletSize: 5       // multiplicador do raio
+};
+
+const playerStats = {
+    fireRate: 1,        // multiplicador (1 = normal)
+    fireSpeed: 1,
+    bulletSpeed: 2,      // multiplicador
+    penetration: 0,     // quantos segmentos atravessa
+    multishot: 1,       // quantidade de tiros
+    bulletSize: 1       // multiplicador do raio
+};
+const MIN_HIT_DISTANCE = 10;
+console.log("fireRate:", playerStats.fireRate);
+
+const baseBulletSpeed = 6;
+const baseBulletRadius = 4;
 
 const snake = {
     segments: [],
@@ -76,6 +103,33 @@ const mouse = {
     y: canvas.height / 2
 };
 
+// touch support
+
+let isTouching = false;
+canvas.addEventListener("touchstart", e => {
+    e.preventDefault();
+    isTouching = true;
+
+    const t = e.touches[0];
+    mouse.x = t.clientX;
+    mouse.y = t.clientY;
+}, { passive: false });
+
+canvas.addEventListener("touchmove", e => {
+    e.preventDefault();
+    if (!isTouching) return;
+
+    const t = e.touches[0];
+    mouse.x = t.clientX;
+    mouse.y = t.clientY;
+}, { passive: false });
+
+canvas.addEventListener("touchend", e => {
+    e.preventDefault();
+    isTouching = false;
+}, { passive: false });
+
+
 window.addEventListener("mousemove", e => {
     mouse.x = e.clientX;
     mouse.y = e.clientY;
@@ -91,6 +145,9 @@ const player = {
 };
 // Atualiza a posição e o ângulo do jogador
 function update() {
+    if (gameState === "cardSelect") return;
+    frameCount++;
+
     /* ======================
        1️⃣ PLAYER
     ====================== */
@@ -106,7 +163,9 @@ function update() {
        2️⃣ TIRO AUTOMÁTICO
     ====================== */
     const now = performance.now();
-    if (now - lastShot > shotInterval) {
+    const effectiveShotInterval = shotInterval / playerStats.fireRate;
+
+    if (now - lastShot > effectiveShotInterval) {
         shoot();
         lastShot = now;
     }
@@ -125,12 +184,15 @@ function update() {
     }
 
     /* ======================
-       4️⃣ COLISÃO TIROS x COBRA
-    ====================== */
+    4️⃣ COLISÃO TIROS x COBRA
+ ====================== */
     for (let i = bullets.length - 1; i >= 0; i--) {
         const bullet = bullets[i];
+        let hitThisFrame = false;
 
         for (let j = 0; j < snake.segments.length; j++) {
+            if (hitThisFrame) break;
+
             const angle = snake.headAngle + j * snake.angleSpacing;
             const radius = snake.headRadius + j * snake.radiusSpacing;
 
@@ -139,34 +201,45 @@ function update() {
                 y: height / 2 + Math.sin(angle) * radius,
                 radius: 5
             };
+            if (bullet.lastHitFrame === frameCount) continue;
 
             if (circleCollision(bullet, segmentPos)) {
-
-                // guarda o tipo ANTES de remover
+                bullet.lastHitFrame = frameCount;
                 const segmentType = snake.segments[j].type;
-
-                // remove tiro
-                bullets.splice(i, 1);
 
                 // remove segmento
                 snake.segments.splice(j, 1);
 
-                // pushback (UMA VEZ)
+                // pushback
                 snake.headRadius += snake.radiusSpacing * snake.pushBack;
 
                 // freeze
                 snake.freezeTime = Math.max(snake.freezeTime, 10);
 
+                // penetração
+                bullet.penetration--;
+
                 // estatísticas
                 hits++;
                 if (segmentType === "power") {
                     powerUpsCollected++;
+                    openCardSelection();
                 }
 
-                break;
+                // remove tiro se acabou a penetração
+                if (bullet.penetration < 0) {
+                    bullets.splice(i, 1);
+                }
+
+                hitThisFrame = true; // 🔥 A CHAVE
+                // força o tiro a sair da massa da cobra
+                bullet.x += bullet.vx * 2;
+                bullet.y += bullet.vy * 2;
             }
         }
     }
+
+
 
     /* ======================
        5️⃣ MOVIMENTO DA COBRA
@@ -196,24 +269,83 @@ function update() {
         window.location.reload();
     }
 }
-function drawHUD() {
-    const barHeight = 20;
 
-    // fundo
+function openCardSelection() {
+    gameState = "cardSelect";
+    currentCards = pickRandomCards(3);
+}
+
+function pickRandomCards(n) {
+    const shuffled = [...cards].sort(() => Math.random() - 0.5);
+    return shuffled.slice(0, n);
+}
+
+// ============================
+// cards
+// ============================
+const cards = [
+    {
+        id: "fireRate",
+        title: "🔥 Gatilho Rápido",
+        desc: "Aumenta a velocidade de disparo",
+        apply() {
+            playerStats.fireRate *= 1.25;
+        }
+    },
+    {
+        id: "bulletSpeed",
+        title: "⚡ Munição Veloz",
+        desc: "Projéteis mais rápidos",
+        apply() {
+            playerStats.bulletSpeed += 1;
+        }
+    },
+    {
+        id: "penetration",
+        title: "🪓 Perfuração",
+        desc: "Balas atravessam inimigos",
+        apply() {
+            playerStats.penetration += 1;
+        }
+    },
+    {
+        id: "multishot",
+        title: "🔱 Tiro Triplo",
+        desc: "Dispara mais projéteis",
+        apply() {
+            playerStats.multishot += 1;
+        }
+    },
+    {
+        id: "bulletSize",
+        title: "💥 Bala Pesada",
+        desc: "Projéteis maiores",
+        apply() {
+            playerStats.bulletSize += 1;
+        }
+    }
+];
+
+function drawHUD() {
+    const barHeight = 40;
+
     ctx.fillStyle = "rgba(0,0,0,0.6)";
     ctx.fillRect(0, 0, width, barHeight);
 
-    // texto
     ctx.fillStyle = "#ffffff";
-    ctx.font = "14px Arial";
+    ctx.font = "13px Arial";
     ctx.textBaseline = "middle";
 
-    ctx.fillText(`🐍 Segmentos: ${snake.segments.length}`, 20, barHeight / 2);
-    ctx.fillText(`🎯 Hits: ${hits}`, 200, barHeight / 2);
-    ctx.fillText(`⭐ Power-ups: ${powerUpsCollected}`, 340, barHeight / 2);
+    ctx.fillText(`🐍 ${snake.segments.length}`, 20, barHeight / 2);
+    ctx.fillText(`🎯 ${hits}`, 80, barHeight / 2);
+    ctx.fillText(`⭐ ${powerUpsCollected}`, 140, barHeight / 2);
+
+    ctx.fillText(`FR: x${playerStats.fireRate.toFixed(2)}`, 220, barHeight / 2);
+    ctx.fillText(`FS: x${playerStats.fireSpeed.toFixed(2)}`, 310, barHeight / 2);
+    ctx.fillText(`PEN: ${playerStats.penetration}`, 400, barHeight / 2);
+    ctx.fillText(`MS: ${playerStats.multishot}`, 470, barHeight / 2);
+    ctx.fillText(`SIZE: x${playerStats.bulletSize.toFixed(1)}`, 540, barHeight / 2);
 }
-
-
 
 
 // Desenha o jogador no canvas
@@ -290,6 +422,62 @@ function draw() {
 
     // HUD
     drawHUD();
+
+    if (gameState === "cardSelect") {
+    drawCards();
+}
+
+function drawCards() {
+    ctx.fillStyle = "rgba(0,0,0,0.7)";
+    ctx.fillRect(0, 0, width, height);
+
+    const cardW = 180;
+    const cardH = 220;
+    const gap = 30;
+    const startX = width / 2 - (cardW * 3 + gap * 2) / 2;
+    const y = height / 2 - cardH / 2;
+
+    ctx.textAlign = "center";
+
+    currentCards.forEach((card, i) => {
+        const x = startX + i * (cardW + gap);
+
+        ctx.fillStyle = "#222";
+        ctx.fillRect(x, y, cardW, cardH);
+
+        ctx.strokeStyle = "#fff";
+        ctx.strokeRect(x, y, cardW, cardH);
+
+        ctx.fillStyle = "#fff";
+        ctx.font = "18px Arial";
+        ctx.fillText(card.title, x + cardW / 2, y + 40);
+
+        ctx.font = "14px Arial";
+        wrapText(card.desc, x + cardW / 2, y + 90, cardW - 20, 18);
+    });
+}
+
+function wrapText(text, x, y, maxWidth, lineHeight) {
+    const words = text.split(" ");
+    let line = "";
+
+    for (let i = 0; i < words.length; i++) {
+        const testLine = line + words[i] + " ";
+        const metrics = ctx.measureText(testLine);
+
+        if (metrics.width > maxWidth && i > 0) {
+            ctx.fillText(line, x, y);
+            line = words[i] + " ";
+            y += lineHeight;
+        } else {
+            line = testLine;
+        }
+    }
+    ctx.fillText(line, x, y);
+}
+
+
+
 }
 
 // ============================
@@ -302,17 +490,32 @@ const shotInterval = 1000; // 1 segundo
 // Atira ao clicar com o mouse
 
 function shoot() {
-    console.log("SHOT AT", player.x, player.y);
-    const speed = 6;
+    const speed = playerStats.bulletSpeed;
+    const shots = playerStats.multishot;
 
-    bullets.push({
-        x: player.x,
-        y: player.y,
-        vx: Math.cos(player.angle) * speed,
-        vy: Math.sin(player.angle) * speed,
-        radius: 4
-    });
+    const spreadAngle = 0.15;   // abertura total
+    const spawnOffset = 8;      // separação inicial entre balas
+
+    for (let i = 0; i < shots; i++) {
+        const t = shots === 1 ? 0.5 : i / (shots - 1);
+        const angleOffset = (t - 0.5) * spreadAngle;
+        const angle = player.angle + angleOffset;
+
+        const offsetX = Math.cos(angle + Math.PI / 2) * (i - (shots - 1) / 2) * spawnOffset;
+        const offsetY = Math.sin(angle + Math.PI / 2) * (i - (shots - 1) / 2) * spawnOffset;
+
+        bullets.push({
+            x: player.x + offsetX,
+            y: player.y + offsetY,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            radius: playerStats.bulletSize,
+            penetration: playerStats.penetration,
+            lastHitFrame: -1
+        });
+    }
 }
+
 
 // Checa colisão entre dois círculos
 function circleCollision(a, b) {
@@ -321,3 +524,30 @@ function circleCollision(a, b) {
     return Math.sqrt(dx * dx + dy * dy) < a.radius + b.radius;
 }
 
+canvas.addEventListener("click", e => {
+    if (gameState !== "cardSelect") return;
+
+    const mx = e.clientX;
+    const my = e.clientY;
+
+    handleCardClick(mx, my);
+});
+function handleCardClick(mx, my) {
+    const cardW = 180;
+    const cardH = 220;
+    const gap = 30;
+    const startX = width / 2 - (cardW * 3 + gap * 2) / 2;
+    const y = height / 2 - cardH / 2;
+
+    currentCards.forEach((card, i) => {
+        const x = startX + i * (cardW + gap);
+
+        if (
+            mx >= x && mx <= x + cardW &&
+            my >= y && my <= y + cardH
+        ) {
+            card.apply();
+            gameState = "playing";
+        }
+    });
+}
