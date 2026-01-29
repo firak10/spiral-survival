@@ -134,6 +134,37 @@ window.addEventListener("mousemove", e => {
     mouse.x = e.clientX;
     mouse.y = e.clientY;
 });
+
+function getPointerPosition(evt) {
+    const rect = canvas.getBoundingClientRect();
+
+    let clientX, clientY;
+
+    if (evt.touches) {
+        clientX = evt.touches[0].clientX;
+        clientY = evt.touches[0].clientY;
+    } else {
+        clientX = evt.clientX;
+        clientY = evt.clientY;
+    }
+
+    return {
+        x: clientX - rect.left,
+        y: clientY - rect.top
+    };
+}
+
+function handlePointer(e) {
+    if (gameState !== "cardSelect") return;
+
+    e.preventDefault(); // 🔥 ESSENCIAL NO MOBILE
+
+    const pos = getPointerPosition(e);
+    handleCardClick(pos.x, pos.y);
+}
+canvas.addEventListener("mousedown", handlePointer);
+canvas.addEventListener("touchstart", handlePointer, { passive: false });
+
 // ============================
 // PLAYER
 // ============================
@@ -524,14 +555,7 @@ function circleCollision(a, b) {
     return Math.sqrt(dx * dx + dy * dy) < a.radius + b.radius;
 }
 
-canvas.addEventListener("click", e => {
-    if (gameState !== "cardSelect") return;
 
-    const mx = e.clientX;
-    const my = e.clientY;
-
-    handleCardClick(mx, my);
-});
 function handleCardClick(mx, my) {
     const cardW = 180;
     const cardH = 220;
